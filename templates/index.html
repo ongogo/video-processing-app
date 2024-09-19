@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Processing</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            height: 100vh;
+            font-size: 24px;
+        }
+        #sidebar {
+            width: 250px;
+            background-color: #f0f0f0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+        .option-button {
+            padding: 15px;
+            margin: 10px 0;
+            font-size: 1.2em;
+            cursor: pointer;
+            border: none;
+            border-radius: 10px;
+            background-color: #e0e0e0;
+            transition: background-color 0.3s;
+        }
+        .option-button.active {
+            background-color: #4CAF50;
+            color: white;
+        }
+        #content {
+            flex-grow: 1;
+            padding: 40px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        #pageTitle {
+            font-size: 3em;
+            margin-bottom: 40px;
+        }
+        #uploadArea {
+            border: 4px dashed #ccc;
+            border-radius: 20px;
+            padding: 60px;
+            text-align: center;
+            cursor: pointer;
+            font-size: 1.5em;
+            margin-bottom: 40px;
+            transition: background-color 0.3s;
+        }
+        #uploadArea:hover {
+            background-color: #f9f9f9;
+        }
+        #progressContainer {
+            width: 100%;
+            height: 40px;
+            background-color: #f0f0f0;
+            border-radius: 20px;
+            margin-bottom: 20px;
+            overflow: hidden;
+            display: none;
+        }
+        #progressBar {
+            width: 0%;
+            height: 100%;
+            background-color: #4CAF50;
+            text-align: center;
+            line-height: 40px;
+            color: white;
+        }
+        #status {
+            font-size: 1.2em;
+            margin-bottom: 20px;
+        }
+        #errorDetails {
+            color: red;
+            margin-top: 20px;
+        }
+        #completionOverlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            display: none;
+        }
+        #completionBox {
+            background-color: white;
+            padding: 40px;
+            border-radius: 20px;
+            text-align: center;
+        }
+        #downloadButton {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 15px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 1.2em;
+            margin: 20px 2px;
+            cursor: pointer;
+            border-radius: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <h2>Options</h2>
+        <button id="remuxButton" class="option-button active" onclick="setAction('remux')">Remux</button>
+        <button id="compressButton" class="option-button" onclick="setAction('compress')">Compress</button>
+        <hr>
+        <p>Alex & Claude A.I</p>
+    </div>
+    <div id="content">
+        <h1 id="pageTitle">Video Processing</h1>
+        <div id="uploadArea" onclick="document.getElementById('fileInput').click()">
+            Upload or drag files here
+        </div>
+        <input type="file" id="fileInput" style="display: none;" accept=".mp4,.avi,.mkv,.mov">
+        <div id="progressContainer">
+            <div id="progressBar">0%</div>
+        </div>
+        <div id="status"></div>
+        <div id="errorDetails"></div>
+    </div>
+    <div id="completionOverlay">
+        <div id="completionBox">
+            <h2>Job Complete</h2>
+            <button id="downloadButton">Download</button>
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/0.21.1/axios.min.js"></script>
+    <script>
+        let selectedAction = 'remux';
+        let currentTaskId = null;
+        let outputFilename = null;
+
+        function setAction(action) {
+            selectedAction = action;
+            document.querySelectorAll('.option-button').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(`${action}Button`).classList.add('active');
+        }
+
+        document.getElementById('fileInput').addEventListener('change', handleFileSelect);
+        document.getElementById('uploadArea').addEventListener('dragover', handleDragOver);
+        document.getElementById('uploadArea').addEventListener('drop', handleDrop);
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                uploadFile(file);
+            }
+        }
+
+        function handleDragOver(event) {
+            event.stopPropagation();
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'copy';
+        }
+
+        function handleDrop(event) {
+            event.stopPropagation();
+            event.preventDefault();
+            const file = event.dataTransfer.files[0];
+            if (file) {
+                uploadFile(file);
+            }
+        }
+
+        function uploadFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('action', selectedAction);
+
+            document.getElementById('uploadArea').style.display = 'none';
+            document.getElementById('progressContainer').style.display = 'block';
+            document.getElementById('status').textContent = 'Uploading...';
+
+            axios.post('/upload', formData, {
+                headers: {
+                    'Content-Type': 'multipart/form-data'
+                }
+            })
+            .then(response => {
+                currentTaskId = response.data.task_id;
+                outputFilename = response.data.filename;
+                document.getElementById('status').textContent = 'Processing...';
+                pollProgress();
+            })
+            .catch(error => {
+                document.getElementById('status').textContent = 'An error occurred.';
+                document.getElementById('errorDetails').textContent = error.response.data.error;
+                document.getElementById('uploadArea').style.display = 'block';
+                document.getElementById('progressContainer').style.display = 'none';
+            });
+        }
+
+        function pollProgress() {
+            if (!currentTaskId) return;
+
+            axios.get(`/progress/${currentTaskId}`)
+                .then(response => {
+                    const progress = response.data.progress;
+                    updateProgressBar(progress);
+
+                    if (progress < 100 && progress >= 0) {
+                        setTimeout(pollProgress, 1000);  // Poll every second
+                    } else if (progress === 100) {
+                        document.getElementById('status').textContent = 'Processing complete!';
+                        document.getElementById('completionOverlay').style.display = 'flex';
+                        document.getElementById('downloadButton').onclick = () => {
+                            window.location.href = `/processed/${outputFilename}`;
+                        };
+                    } else {
+                        document.getElementById('status').textContent = 'An error occurred during processing.';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error polling progress:', error);
+                    document.getElementById('status').textContent = 'Error checking progress.';
+                });
+        }
+
+        function updateProgressBar(progress) {
+            const progressBar = document.getElementById('progressBar');
+            progressBar.style.width = `${progress}%`;
+            progressBar.textContent = `${progress}%`;
+        }
+    </script>
+</body>
+</html>
