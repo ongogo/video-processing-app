@@ -15,7 +15,9 @@
             width: 200px;
             padding: 20px;
             height: 100vh;
-            background-color: #98c1d9;
+            background-color: #0d0628;
+            display: flex;
+            flex-direction: column;
         }
         #content {
             flex-grow: 1;
@@ -26,17 +28,22 @@
             width: 100%;
         }
         #uploadArea {
-            border: 2px dashed #ccc;
-            border-radius: 20px;
+            border: 2px dashed #fca17d;
+            border-radius: 10px;
             width: 300px;
             height: 200px;
             display: flex;
             justify-content: center;
             align-items: center;
             cursor: pointer;
+            background-color: #ffe;
+            color: #fca17d;
         }
         #uploadArea.dragover {
-            background-color: #e0e0e0;
+            background-color: #f9dbbd;
+        }
+        #uploadArea:hover {
+            background-color: #f9dbbd;
         }
         #progressContainer {
             width: 300px;
@@ -49,7 +56,7 @@
         #progressBar {
             width: 0;
             height: 30px;
-            background-color: #4CAF50;
+            background-color: #9a348e;
             text-align: center;
             line-height: 30px;
             color: white;
@@ -69,24 +76,27 @@
         }
         #completionBox {
             background-color: white;
-            padding: 20px;
-            border-radius: 10px;
+            padding: 60px;
+            border-radius: 14px;
             text-align: center;
             display: flex;
             justify-content: center;
             align-items: center;
+            flex-direction: column;
         }
         #downloadFile {
             display: flex;
             justify-content: center;
             align-items: center;
-            background-color: #ffb400;
+            background-color: #bcd251;
             border-radius: 10px;
             border-style: dashed;
+            padding: 20px;
+            color: white;
         }
 
         .option-button {
-            background-color: #98c1d9;
+            background-color: #0d0628;
             border-style: dashed;
             color: white;
             padding: 10px 15px;
@@ -100,11 +110,11 @@
             transition: background-color 0.3s;
         }
         .option-button:hover {
-            background-color: #ffb400;
+            background-color: #da627d;
         }
         
         .option-button.selected {
-            background-color: #ffb400;
+            background-color: #9a348e;
         }
         .footer {
             display: flex;
@@ -120,14 +130,16 @@
                 bottom: 0;
                 left: 0;
                 display: flex;
+                flex-direction: row;
                 height: 100px;
                 z-index: 1000;
-                background-color: #98c1d9;
+                background-color: #0d0628;
             }
             #sidebar h2, #sidebar hr {
                 display: none;
             }
             #content {
+
                 padding-bottom: 70px;
             }
             button {
