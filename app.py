@@ -35,9 +35,9 @@ def get_video_duration(filepath):
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return float(result.stdout)
 
-def process_video(input_path, output_path, action, duration, task_id):
+def process_video(input_path, output_path, action, duration, task_id, original_filename):
     global progress_dict
-    progress_dict[task_id] = 0
+    progress_dict[task_id] = {'progress': 0, 'filename': ''}
 
     if action == 'compress':
         command = [
@@ -52,6 +52,7 @@ def process_video(input_path, output_path, action, duration, task_id):
             '-progress', 'pipe:1',
             output_path
         ]
+        suffix = 'compressed'
     else:  # remux
         command = [
             'ffmpeg',
@@ -60,6 +61,7 @@ def process_video(input_path, output_path, action, duration, task_id):
             '-progress', 'pipe:1',
             output_path
         ]
+        suffix = 'remuxed'
 
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
     
@@ -68,14 +70,18 @@ def process_video(input_path, output_path, action, duration, task_id):
         if progress_match:
             time_in_ms = int(progress_match.group(1))
             progress = min(99, int((time_in_ms / 1000000) / duration * 100))
-            progress_dict[task_id] = progress
+            progress_dict[task_id]['progress'] = progress
 
     process.wait()
     
     if process.returncode == 0:
-        progress_dict[task_id] = 100
+        progress_dict[task_id]['progress'] = 100
+        name, ext = os.path.splitext(original_filename)
+        new_filename = f"{name}_{suffix}{ext}"
+        os.rename(output_path, os.path.join(PROCESSED_FOLDER, new_filename))
+        progress_dict[task_id]['filename'] = new_filename
     else:
-        progress_dict[task_id] = -1  # Indicate an error
+        progress_dict[task_id]['progress'] = -1  # Indicate an error
 
 @app.route('/')
 def index():
@@ -97,7 +103,7 @@ def upload_file():
             os.remove(filepath)
             return jsonify({'error': 'File is not a valid video'}), 400
         
-        output_filename = os.path.splitext(filename)[0] + '_processed.mp4'
+        output_filename = filename  # Use the UUID filename for processing
         output_filepath = os.path.join(PROCESSED_FOLDER, output_filename)
         
         action = request.form.get('action', 'remux')
@@ -105,27 +111,22 @@ def upload_file():
         
         try:
             duration = get_video_duration(filepath)
-            thread = threading.Thread(target=process_video, args=(filepath, output_filepath, action, duration, task_id))
+            thread = threading.Thread(target=process_video, args=(filepath, output_filepath, action, duration, task_id, file.filename))
             thread.start()
             
-            return jsonify({'task_id': task_id, 'filename': output_filename}), 200
+            return jsonify({'task_id': task_id}), 200
         except Exception as e:
             app.logger.error(f"Processing error: {str(e)}")
             return jsonify({'error': f'Processing error: {str(e)}'}), 500
 
 @app.route('/progress/<task_id>')
 def get_progress(task_id):
-    progress = progress_dict.get(task_id, 0)
-    return jsonify({'progress': progress})
+    task_info = progress_dict.get(task_id, {'progress': 0, 'filename': ''})
+    return jsonify(task_info)
 
 @app.route('/processed/<filename>')
 def download_file(filename):
     return send_file(os.path.join(PROCESSED_FOLDER, filename), as_attachment=True)
-
-@app.route('/open_folder')
-def open_folder():
-    folder_path = os.path.abspath(PROCESSED_FOLDER)
-    return jsonify({'folder_path': folder_path})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5333)
