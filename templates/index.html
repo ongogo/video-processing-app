@@ -83,6 +83,7 @@
             justify-content: center;
             align-items: center;
             flex-direction: column;
+            color: gray;
         }
         #downloadFile {
             display: flex;
@@ -93,6 +94,7 @@
             border-style: dashed;
             padding: 20px;
             color: white;
+            cursor: pointer;
         }
 
         .option-button {
@@ -182,7 +184,7 @@
     </div>
     <div id="completionOverlay">
         <div id="completionBox">
-            <h2>Job Complete</h2>
+            <h2>Finished!<br> Refresh to restart.</h2>
             <button id="downloadFile" onclick="downloadFile()">Download</button>
         </div>
     </div>
