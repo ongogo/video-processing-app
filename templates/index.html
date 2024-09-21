@@ -1,132 +1,301 @@
-from flask import Flask, request, send_file, render_template, jsonify
-import os
-import subprocess
-import uuid
-import magic
-import threading
-import re
-import time
-
-app = Flask(__name__)
-app.config['TEMPLATES_AUTO_RELOAD'] = True
-
-UPLOAD_FOLDER = 'uploads'
-PROCESSED_FOLDER = 'processed'
-ALLOWED_EXTENSIONS = {'mp4', 'avi', 'mkv', 'mov'}
-
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
-if not os.path.exists(PROCESSED_FOLDER):
-    os.makedirs(PROCESSED_FOLDER)
-
-# Global dictionary to store progress
-progress_dict = {}
-
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-def check_file_type(file_path):
-    mime = magic.Magic(mime=True)
-    file_type = mime.from_file(file_path)
-    return file_type.startswith('video/')
-
-def get_video_duration(filepath):
-    cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', filepath]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    return float(result.stdout)
-
-def process_video(input_path, output_path, action, duration, task_id, original_filename):
-    global progress_dict
-    progress_dict[task_id] = {'progress': 0, 'filename': ''}
-
-    if action == 'compress':
-        command = [
-            'ffmpeg',
-            '-i', input_path,
-            '-vf', 'scale=1920:-1',
-            '-c:v', 'libx264',
-            '-crf', '23',
-            '-preset', 'medium',
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-progress', 'pipe:1',
-            output_path
-        ]
-        suffix = 'compressed'
-    else:  # remux
-        command = [
-            'ffmpeg',
-            '-i', input_path,
-            '-c', 'copy',
-            '-progress', 'pipe:1',
-            output_path
-        ]
-        suffix = 'remuxed'
-
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
-    
-    for line in process.stdout:
-        progress_match = re.search(r'out_time_ms=(\d+)', line)
-        if progress_match:
-            time_in_ms = int(progress_match.group(1))
-            progress = min(99, int((time_in_ms / 1000000) / duration * 100))
-            progress_dict[task_id]['progress'] = progress
-
-    process.wait()
-    
-    if process.returncode == 0:
-        progress_dict[task_id]['progress'] = 100
-        name, ext = os.path.splitext(original_filename)
-        new_filename = f"{name}_{suffix}{ext}"
-        os.rename(output_path, os.path.join(PROCESSED_FOLDER, new_filename))
-        progress_dict[task_id]['filename'] = new_filename
-    else:
-        progress_dict[task_id]['progress'] = -1  # Indicate an error
-
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-@app.route('/upload', methods=['POST'])
-def upload_file():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file part'}), 400
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
-    if file and allowed_file(file.filename):
-        filename = str(uuid.uuid4()) + os.path.splitext(file.filename)[1]
-        filepath = os.path.join(UPLOAD_FOLDER, filename)
-        file.save(filepath)
-        
-        if not check_file_type(filepath):
-            os.remove(filepath)
-            return jsonify({'error': 'File is not a valid video'}), 400
-        
-        output_filename = filename  # Use the UUID filename for processing
-        output_filepath = os.path.join(PROCESSED_FOLDER, output_filename)
-        
-        action = request.form.get('action', 'remux')
-        task_id = str(uuid.uuid4())
-        
-        try:
-            duration = get_video_duration(filepath)
-            thread = threading.Thread(target=process_video, args=(filepath, output_filepath, action, duration, task_id, file.filename))
-            thread.start()
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Processing App</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+        }
+        #sidebar {
+            width: 200px;
+            padding: 20px;
+            height: 100vh;
+            background-color: #98c1d9;
+        }
+        #content {
+            flex-grow: 1;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+        }
+        #uploadArea {
+            border: 2px dashed #ccc;
+            border-radius: 20px;
+            width: 300px;
+            height: 200px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+        }
+        #uploadArea.dragover {
+            background-color: #e0e0e0;
+        }
+        #progressContainer {
+            width: 300px;
+            background-color: #f0f0f0;
+            margin-top: 20px;
+            display: none;
+            border-radius: 10px;
             
-            return jsonify({'task_id': task_id}), 200
-        except Exception as e:
-            app.logger.error(f"Processing error: {str(e)}")
-            return jsonify({'error': f'Processing error: {str(e)}'}), 500
+        }
+        #progressBar {
+            width: 0;
+            height: 30px;
+            background-color: #4CAF50;
+            text-align: center;
+            line-height: 30px;
+            color: white;
+            border-radius: 10px;
+            
+        }
+        #completionOverlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            justify-content: center;
+            align-items: center;
+        }
+        #completionBox {
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        #downloadFile {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #ffb400;
+            border-radius: 10px;
+            border-style: dashed;
+        }
 
-@app.route('/progress/<task_id>')
-def get_progress(task_id):
-    task_info = progress_dict.get(task_id, {'progress': 0, 'filename': ''})
-    return jsonify(task_info)
+        .option-button {
+            background-color: #98c1d9;
+            border-style: dashed;
+            color: white;
+            padding: 10px 15px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 14px;
+            margin: 2px;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: background-color 0.3s;
+        }
+        .option-button:hover {
+            background-color: #ffb400;
+        }
+        
+        .option-button.selected {
+            background-color: #ffb400;
+        }
+        .footer {
+            display: flex;
+            position: fixed;
+            bottom: 0;
+            color: white;
+        }
+        @media (max-width: 768px) {
+            
+            #sidebar {
+                width: 100%;
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                display: flex;
+                height: 100px;
+                z-index: 1000;
+                background-color: #98c1d9;
+            }
+            #sidebar h2, #sidebar hr {
+                display: none;
+            }
+            #content {
+                padding-bottom: 70px;
+            }
+            button {
+                display: inline;
+                
+                padding: 10px;
+                margin: 10px;
+                border-style: dashed;
+            }
+            #uploadArea {
+                margin-top: 150px;
+            }
+            
+            .footer {
+                display: none;
+            }
 
-@app.route('/processed/<filename>')
-def download_file(filename):
-    return send_file(os.path.join(PROCESSED_FOLDER, filename), as_attachment=True)
+            }
+        
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <h2>Tools</h2>
+        <button class="option-button" onclick="selectOption(this, 'remux')">Remux</button>
+        <button class="option-button" onclick="selectOption(this, 'compress')">Compress</button>
+        <p class="footer">Created by Claude.ai</p>    
+    </div>
+    <div id="content">
+        
+        <div id="uploadArea" onclick="document.getElementById('fileInput').click()">
+            Upload or drag file here
+        </div>
+        <input type="file" id="fileInput" style="display: none;" accept=".mp4,.avi,.mkv,.mov" onchange="handleFileSelect(this.files)">
+        <div id="progressContainer">
+            <div id="progressBar">0%</div>
+        </div>
+        <div id="status"></div>
+        <div id="errorDetails"></div>
+    </div>
+    <div id="completionOverlay">
+        <div id="completionBox">
+            <h2>Job Complete</h2>
+            <button id="downloadFile" onclick="downloadFile()">Download</button>
+        </div>
+    </div>
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5333)
+    <script>
+        let currentAction = 'remux';
+        let currentTaskId = null;
+        let processedFilename = null;
+
+        function selectOption(button, option) {
+            // Remove 'selected' class from all buttons
+            document.querySelectorAll('.option-button').forEach(btn => {
+                btn.classList.remove('selected');
+            });
+            
+            // Add 'selected' class to the clicked button
+            button.classList.add('selected');
+            
+            // Set the current action
+            currentAction = option;
+
+            // You can perform any action based on the selected option here
+            console.log('Selected option:', option);
+        }
+
+        function handleFileSelect(files) {
+            if (files.length > 0) {
+                uploadFile(files[0]);
+            }
+        }
+
+        function uploadFile(file) {
+            if (file) {
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('action', currentAction);
+
+                // Hide upload area and show progress
+                document.getElementById('uploadArea').style.display = 'none';
+                document.getElementById('progressContainer').style.display = 'block';
+
+                fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        document.getElementById('errorDetails').innerText = data.error;
+                        resetUploadArea();
+                    } else {
+                        currentTaskId = data.task_id;
+                        checkProgress();
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    document.getElementById('errorDetails').innerText = 'An error occurred during upload.';
+                    resetUploadArea();
+                });
+            }
+        }
+
+        function checkProgress() {
+            if (!currentTaskId) return;
+
+            fetch(`/progress/${currentTaskId}`)
+                .then(response => response.json())
+                .then(data => {
+                    const progressBar = document.getElementById('progressBar');
+                    progressBar.style.width = `${data.progress}%`;
+                    progressBar.innerText = `${data.progress}%`;
+
+                    if (data.progress < 100 && data.progress >= 0) {
+                        setTimeout(checkProgress, 1000);
+                    } else if (data.progress === 100) {
+                        document.getElementById('completionOverlay').style.display = 'flex';
+                        processedFilename = data.filename;
+                    } else {
+                        document.getElementById('errorDetails').innerText = 'An error occurred during processing.';
+                        resetUploadArea();
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    document.getElementById('errorDetails').innerText = 'An error occurred while checking progress.';
+                    resetUploadArea();
+                });
+        }
+
+        function downloadFile() {
+            if (processedFilename) {
+                window.location.href = `/processed/${encodeURIComponent(processedFilename)}`;
+                resetUploadArea();
+            }
+        }
+
+        function resetUploadArea() {
+            document.getElementById('uploadArea').style.display = 'flex';
+            document.getElementById('progressContainer').style.display = 'none';
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('progressBar').innerText = '0%';
+            currentTaskId = null;
+            processedFilename = null;
+        }
+
+        // Drag and drop functionality
+        const uploadArea = document.getElementById('uploadArea');
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            handleFileSelect(files);
+        });
+    </script>
+    
+</body>
+</html>
